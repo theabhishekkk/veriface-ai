@@ -59,7 +59,7 @@ def load_vit_model():
     _device = _get_device()
     model = timm.create_model(
         "vit_base_patch16_224",
-        pretrained=True,
+        pretrained=False,
         num_classes=2,
     )
     checkpoint = torch.load(MODEL_CHECKPOINT, map_location="cpu", weights_only=True)
@@ -224,8 +224,13 @@ def predict_image(image_bytes: bytes) -> dict[str, Any]:
                 raise ValueError("Only JPEG and PNG images are supported.")
             if source.width * source.height > 40_000_000:
                 raise ValueError("The image dimensions exceed the 40 megapixel limit.")
+            source.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
             image = source.convert("RGB")
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+    except (
+        UnidentifiedImageError,
+        OSError,
+        Image.DecompressionBombError,
+    ) as exc:
         raise ValueError("The uploaded file is not a valid JPEG or PNG image.") from exc
 
     return _run_mock(image) if USE_MOCK_MODEL else _run_vit(image)

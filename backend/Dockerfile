@@ -11,6 +11,7 @@ WORKDIR /app
 
 # Install runtime dependencies required for OpenCV and image processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
     libglib2.0-0 \
     libgomp1 \
     curl \
@@ -20,6 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
+
+ARG INSTALL_VIT_MODEL=false
+COPY requirements-model.txt /app/
+RUN if [ "$INSTALL_VIT_MODEL" = "true" ]; then \
+      pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.2.0,<3.0" "torchvision>=0.17.0,<1.0" && \
+      pip install --no-cache-dir "timm>=1.0.0,<2.0"; \
+    fi
 
 # Copy application source code
 COPY main.py model.py /app/

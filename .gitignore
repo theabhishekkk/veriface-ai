@@ -4,6 +4,7 @@ frontend/.next/
 frontend/out/
 
 # Local secrets and Python environment/cache
+.env
 frontend/.env.local
 backend/.env
 backend/.venv/

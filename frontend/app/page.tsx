@@ -52,7 +52,7 @@ export default function Home() {
         setBackendHealth({
           online: true,
           mode: data.model_mode || 'vit_base_patch16_224',
-          supabase: Boolean(data.supabase_connected),
+          supabase: Boolean(data.supabase_configured),
         });
         return;
       }

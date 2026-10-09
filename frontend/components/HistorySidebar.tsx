@@ -54,7 +54,7 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
             <p className="text-xs text-slate-400 flex items-center gap-1.5">
               <Database className="w-3 h-3 text-indigo-400" />
               <span>
-                {supabaseConnected ? 'Supabase PostgreSQL' : 'Recent scan history'}
+                {supabaseConnected ? 'Supabase PostgreSQL' : 'In-memory fallback'}
               </span>
             </p>
           </div>
@@ -152,7 +152,7 @@ export const HistorySidebar: React.FC<HistorySidebarProps> = ({
               supabaseConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
             }`}
           />
-          {supabaseConnected ? 'Connected to PostgreSQL' : 'In-memory fallback'}
+          {supabaseConnected ? 'Supabase configured' : 'In-memory fallback'}
         </span>
         <span className="font-mono text-slate-500">v1.0.0</span>
       </div>

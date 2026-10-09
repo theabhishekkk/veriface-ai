@@ -35,8 +35,9 @@ upload-to-history flow can be exercised without downloading model weights.
 
 ## Configuration
 
-The backend reads `backend/.env` when run directly, or environment variables
-when run with Docker Compose. Start with `backend/.env.example`. For persistent
+The backend reads `backend/.env` when run directly, or the project-root `.env`
+when run with Docker Compose. Start from `backend/.env.example` for direct
+execution, or copy `.env.example` to `.env` for Compose. For persistent
 history, set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the backend and
 run [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL editor.
 Keep the service-role key out of frontend environment variables and source
@@ -46,7 +47,16 @@ history UI; avoid using sensitive filenames.
 The frontend can optionally use the Supabase anon key for history fallback;
 configure `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in
 `frontend/.env.local`. `NEXT_PUBLIC_API_URL` should point to the deployed API
-for Vercel deployments.
+for Vercel deployments. Configure the same URL as a Vercel environment
+variable, and add the frontend's production URL to Render's `CORS_ORIGINS`
+(comma-separated for multiple origins). Vercel preview origins under
+`vercel.app` are allowed by the backend's default CORS origin pattern.
+
+For Render, connect this repository, set the service Root Directory to
+`backend`, use the Docker runtime, and set the Dockerfile path to `./Dockerfile`.
+Set `SUPABASE_URL` to the project URL shown above and add
+`SUPABASE_SERVICE_ROLE_KEY` using Render's secret environment-variable UI.
+Never put the service-role key in GitHub, Vercel, or a `NEXT_PUBLIC_` variable.
 
 To enable real ViT inference:
 
@@ -58,6 +68,11 @@ To enable real ViT inference:
 
 The backend rejects real-mode startup if a checkpoint is missing or invalid;
 it does not silently report simulated predictions as model output.
+The default Docker image intentionally omits PyTorch to keep mock-mode builds
+small and quick. For real inference, build with
+`docker compose build --build-arg INSTALL_VIT_MODEL=true backend`, then start
+with `INSTALL_VIT_MODEL=true`, `USE_MOCK_MODEL=False`, and the checkpoint
+environment variable configured.
 
 ## API
 

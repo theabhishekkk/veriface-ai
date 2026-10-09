@@ -2,16 +2,19 @@ services:
   backend:
     build:
       context: ./backend
+      args:
+        INSTALL_VIT_MODEL: "${INSTALL_VIT_MODEL:-false}"
     ports:
       - "8000:8000"
     environment:
       PORT: "8000"
       USE_MOCK_MODEL: "${USE_MOCK_MODEL:-True}"
       MODEL_CHECKPOINT: "${MODEL_CHECKPOINT:-}"
-      SUPABASE_URL: "${SUPABASE_URL:-}"
+      SUPABASE_URL: "${SUPABASE_URL:-https://cowtcfcjpauyfvyvwfxg.supabase.co}"
       SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000}"
       MAX_IMAGE_BYTES: "10485760"
+      MAX_CONCURRENT_INFERENCES: "1"
     volumes:
       - ./backend/models:/models:ro
     restart: unless-stopped
