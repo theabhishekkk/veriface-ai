@@ -28,13 +28,18 @@ MAX_CONCURRENT_INFERENCES = int(os.getenv("MAX_CONCURRENT_INFERENCES", "1"))
 if MAX_CONCURRENT_INFERENCES < 1:
     raise ValueError("MAX_CONCURRENT_INFERENCES must be a positive integer.")
 _inference_slots = asyncio.Semaphore(MAX_CONCURRENT_INFERENCES)
-origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
-    ).split(",")
-    if origin.strip()
-]
+default_origins = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://veriface-ai-1.onrender.com",
+)
+origins = list(
+    dict.fromkeys(
+        origin.strip()
+        for origin in (*default_origins, *os.getenv("CORS_ORIGINS", "").split(","))
+        if origin.strip()
+    )
+)
 origin_regex = os.getenv("CORS_ORIGIN_REGEX", r"https://[a-z0-9-]+\.vercel\.app")
 
 supabase_client = None

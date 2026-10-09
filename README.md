@@ -47,10 +47,12 @@ history UI; avoid using sensitive filenames.
 The frontend can optionally use the Supabase anon key for history fallback;
 configure `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in
 `frontend/.env.local`. `NEXT_PUBLIC_API_URL` should point to the deployed API
-for Vercel deployments. Configure the same URL as a Vercel environment
-variable, and add the frontend's production URL to Render's `CORS_ORIGINS`
-(comma-separated for multiple origins). Vercel preview origins under
-`vercel.app` are allowed by the backend's default CORS origin pattern.
+for frontend deployments. Set it as a build-time environment variable on the
+frontend host. The deployed Render frontend
+(`https://veriface-ai-1.onrender.com`) is allowed by default. Set
+`CORS_ORIGINS` to add any other trusted frontend origins, comma-separated.
+Vercel preview origins under `vercel.app` are also allowed by the backend's
+default CORS origin pattern.
 
 For Render, connect this repository and use the Docker runtime with the
 repository root as the service root and `./Dockerfile` as the Dockerfile path.

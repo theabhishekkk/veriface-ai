@@ -61,6 +61,13 @@ def test_vercel_origin_is_allowed_without_allowing_arbitrary_sites():
                 "Access-Control-Request-Method": "POST",
             },
         )
+        render_response = client.options(
+            "/predict",
+            headers={
+                "Origin": "https://veriface-ai-1.onrender.com",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
         other_response = client.options(
             "/predict",
             headers={
@@ -71,6 +78,9 @@ def test_vercel_origin_is_allowed_without_allowing_arbitrary_sites():
 
     assert vercel_response.headers["access-control-allow-origin"] == (
         "https://veriface-ai-preview.vercel.app"
+    )
+    assert render_response.headers["access-control-allow-origin"] == (
+        "https://veriface-ai-1.onrender.com"
     )
     assert "access-control-allow-origin" not in other_response.headers
 
