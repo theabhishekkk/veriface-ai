@@ -52,9 +52,11 @@ variable, and add the frontend's production URL to Render's `CORS_ORIGINS`
 (comma-separated for multiple origins). Vercel preview origins under
 `vercel.app` are allowed by the backend's default CORS origin pattern.
 
-For Render, connect this repository, set the service Root Directory to
-`backend`, use the Docker runtime, and set the Dockerfile path to `./Dockerfile`.
-Set `SUPABASE_URL` to the project URL shown above and add
+For Render, connect this repository and use the Docker runtime with the
+repository root as the service root and `./Dockerfile` as the Dockerfile path.
+The root Dockerfile copies and builds the backend from that repository-root
+context. Alternatively, set the service Root Directory to `backend` and use
+its `./Dockerfile`. Set `SUPABASE_URL` to the project URL shown above and add
 `SUPABASE_SERVICE_ROLE_KEY` using Render's secret environment-variable UI.
 Never put the service-role key in GitHub, Vercel, or a `NEXT_PUBLIC_` variable.
 
