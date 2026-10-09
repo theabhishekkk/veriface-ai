@@ -1,0 +1,15 @@
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Local secrets and Python environment/cache
+frontend/.env.local
+backend/.env
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local model weights can be large and are supplied separately
+backend/models/
