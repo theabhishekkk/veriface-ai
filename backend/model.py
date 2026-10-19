@@ -5,6 +5,7 @@ import io
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -18,7 +19,10 @@ USE_MOCK_MODEL = os.getenv("USE_MOCK_MODEL", "True").strip().lower() in {
     "1",
     "yes",
 }
-MODEL_CHECKPOINT = os.getenv("MODEL_CHECKPOINT", "").strip()
+MODEL_CHECKPOINT = os.getenv(
+    "MODEL_CHECKPOINT",
+    str(Path(__file__).resolve().parent / "models" / "vit_deepfake.pth"),
+).strip()
 
 _vit_model = None
 _vit_transform = None
@@ -75,7 +79,8 @@ def load_vit_model():
 
     # Disable fused attention in the final block so timm exposes attention weights.
     if hasattr(model.blocks[-1].attn, "fused_attn"):
-        model.blocks[-1].attn.fused_attn = False
+        for block in model.blocks:
+            block.attn.fused_attn = False
 
     _vit_transform = transforms.Compose(
         [
@@ -88,7 +93,7 @@ def load_vit_model():
         ]
     )
     _vit_model = model
-    logger.info("Loaded fine-tuned ViT checkpoint on %s", _device)
+    logger.info("Loaded ViT checkpoint %s on %s", MODEL_CHECKPOINT, _device)
     return _vit_model
 
 
@@ -113,8 +118,9 @@ def _mock_attention_map(image: np.ndarray) -> np.ndarray:
 
 def _encode_heatmaps(image_bgr: np.ndarray, attention: np.ndarray) -> tuple[str, str]:
     height, width = image_bgr.shape[:2]
-    resized = cv2.resize(attention, (width, height), interpolation=cv2.INTER_CUBIC)
-    heatmap = cv2.applyColorMap(np.uint8(np.clip(resized, 0, 1) * 255), cv2.COLORMAP_TURBO)
+    attention_224 = cv2.resize(attention, (224, 224), interpolation=cv2.INTER_CUBIC)
+    resized = cv2.resize(attention_224, (width, height), interpolation=cv2.INTER_CUBIC)
+    heatmap = cv2.applyColorMap(np.uint8(np.clip(resized, 0, 1) * 255), cv2.COLORMAP_JET)
     overlay = cv2.addWeighted(image_bgr, 0.48, heatmap, 0.52, 0)
 
     def encode(image: np.ndarray) -> str:
@@ -186,13 +192,17 @@ def _run_vit(image: Image.Image) -> dict[str, Any]:
     def capture_attention(_module, inputs, _output):
         attention_weights.append(inputs[0].detach())
 
-    hook = model.blocks[-1].attn.attn_drop.register_forward_hook(capture_attention)
+    hooks = [
+        block.attn.attn_drop.register_forward_hook(capture_attention)
+        for block in model.blocks
+    ]
     started = time.perf_counter()
     try:
         with torch.inference_mode():
             logits = model(input_tensor)
     finally:
-        hook.remove()
+        for hook in hooks:
+            hook.remove()
     elapsed_ms = (time.perf_counter() - started) * 1000
 
     if logits.ndim != 2 or logits.shape[-1] != 2:
@@ -201,9 +211,22 @@ def _run_vit(image: Image.Image) -> dict[str, Any]:
     synthetic_index = 1
     is_synthetic = bool(np.argmax(probabilities) == synthetic_index)
     confidence = float(probabilities[synthetic_index if is_synthetic else 1 - synthetic_index])
-    if not attention_weights:
-        raise RuntimeError("The ViT model did not expose attention weights.")
-    cls_attention = attention_weights[0][0, :, 0, 1:].mean(dim=0).float().cpu().numpy()
+    if len(attention_weights) != len(model.blocks):
+        raise RuntimeError(
+            "The ViT model did not expose attention weights from every transformer block."
+        )
+    joint_attention = None
+    identity = torch.eye(attention_weights[0].shape[-1], device=_device)
+    for weights in attention_weights:
+        mean_attention = weights[0].mean(dim=0).float()
+        residual_attention = mean_attention + identity
+        residual_attention /= residual_attention.sum(dim=-1, keepdim=True)
+        joint_attention = (
+            residual_attention
+            if joint_attention is None
+            else residual_attention @ joint_attention
+        )
+    cls_attention = joint_attention[0, 1:].cpu().numpy()
     attention_map = _normalize_attention(cls_attention.reshape(14, 14))
     return _make_result(
         image,
@@ -214,6 +237,17 @@ def _run_vit(image: Image.Image) -> dict[str, Any]:
         "production_vit",
         "vit_base_patch16_224",
     )
+
+
+def get_model_status() -> dict[str, Any]:
+    """Return the configured and currently loaded inference model state."""
+    return {
+        "mock_mode": USE_MOCK_MODEL,
+        "model_name": "mock" if USE_MOCK_MODEL else "vit_base_patch16_224",
+        "device": "cpu" if USE_MOCK_MODEL else _device,
+        "checkpoint": MODEL_CHECKPOINT,
+        "checkpoint_loaded": not USE_MOCK_MODEL and _vit_model is not None,
+    }
 
 
 def predict_image(image_bytes: bytes) -> dict[str, Any]:

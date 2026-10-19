@@ -3,18 +3,42 @@ services:
     build:
       context: ./backend
       args:
-        INSTALL_VIT_MODEL: "${INSTALL_VIT_MODEL:-false}"
+        INSTALL_VIT_MODEL: "${INSTALL_VIT_MODEL:-true}"
     ports:
       - "8000:8000"
     environment:
       PORT: "8000"
-      USE_MOCK_MODEL: "${USE_MOCK_MODEL:-True}"
-      MODEL_CHECKPOINT: "${MODEL_CHECKPOINT:-}"
+      INSTALL_VIT_MODEL: "${INSTALL_VIT_MODEL:-true}"
+      USE_MOCK_MODEL: "${USE_MOCK_MODEL:-False}"
+      MODEL_CHECKPOINT: "${MODEL_CHECKPOINT:-/models/vit_deepfake.pth}"
+      HF_MODEL_REPO: "${HF_MODEL_REPO:-prithivMLmods/Deep-Fake-Detector-v2-Model}"
+      MODEL_URL: "${MODEL_URL:-}"
+      HF_CLASS_ORDER: "${HF_CLASS_ORDER:-}"
       SUPABASE_URL: "${SUPABASE_URL:-https://cowtcfcjpauyfvyvwfxg.supabase.co}"
       SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:-}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000}"
       MAX_IMAGE_BYTES: "10485760"
       MAX_CONCURRENT_INFERENCES: "1"
     volumes:
-      - ./backend/models:/models:ro
+      - ./backend/models:/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5m
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:8000}"
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:8000}"
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
