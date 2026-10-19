@@ -6,9 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 ENV USE_MOCK_MODEL=False
-ENV INSTALL_VIT_MODEL=true
 ENV HF_MODEL_REPO=prithivMLmods/Deep-Fake-Detector-v2-Model
 ENV MODEL_CHECKPOINT=/models/vit_deepfake.pth
+ARG INSTALL_VIT_MODEL=true
+ENV INSTALL_VIT_MODEL=${INSTALL_VIT_MODEL}
 
 WORKDIR /app
 
@@ -25,7 +26,6 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-ARG INSTALL_VIT_MODEL=true
 COPY requirements-model.txt /app/
 RUN if [ "$INSTALL_VIT_MODEL" = "true" ]; then \
       pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
@@ -38,14 +38,15 @@ COPY main.py model.py /app/
 COPY scripts /app/scripts
 
 # Run the API as an unprivileged user.
-RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+RUN mkdir -p /models && useradd --create-home --uid 10001 appuser && \
+    chown -R appuser:appuser /app /models
 USER appuser
 
 # Expose API port
 EXPOSE 8000
 
 # Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
 # Start FastAPI server via uvicorn

@@ -17,6 +17,10 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
 MODEL_NAME = "vit_base_patch16_224"
 DEFAULT_HF_MODEL_REPO = "prithivMLmods/Deep-Fake-Detector-v2-Model"
+IMAGENET_PREPROCESSING = {
+    "mean": [0.485, 0.456, 0.406],
+    "std": [0.229, 0.224, 0.225],
+}
 
 
 def _state_dict(checkpoint: Any) -> dict[str, Any]:
@@ -39,31 +43,53 @@ def _clean_keys(state_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 def _class_row_indices(config: dict[str, Any]) -> tuple[int, int]:
+    def is_real(label: str) -> bool:
+        return any(
+            term in label for term in ("real", "authentic", "genuine", "original")
+        )
+
+    def is_synthetic(label: str) -> bool:
+        return any(
+            term in label
+            for term in ("synthetic", "deepfake", "fake", "generated", "manipulated")
+        )
+
     labels = config.get("id2label", {})
     if isinstance(labels, list):
         labels = dict(enumerate(labels))
     labels = {int(index): str(label).lower() for index, label in labels.items()}
-    real_index = next(
-        (
-            index
-            for index, label in labels.items()
-            if any(term in label for term in ("real", "authentic", "genuine", "original"))
-        ),
-        None,
-    )
+    real_index = next((index for index, label in labels.items() if is_real(label)), None)
     synthetic_index = next(
-        (
-            index
-            for index, label in labels.items()
-            if any(term in label for term in ("synthetic", "deepfake", "fake", "generated", "manipulated"))
-        ),
-        None,
+        (index for index, label in labels.items() if is_synthetic(label)), None
     )
+    if real_index is None or synthetic_index is None:
+        label_to_index = config.get("label2id", {})
+        if isinstance(label_to_index, dict):
+            labels = {
+                int(index): str(label).lower()
+                for label, index in label_to_index.items()
+            }
+            real_index = next(
+                (index for index, label in labels.items() if is_real(label)), None
+            )
+            synthetic_index = next(
+                (index for index, label in labels.items() if is_synthetic(label)),
+                None,
+            )
     if real_index is None or synthetic_index is None or real_index == synthetic_index:
         source_order = os.getenv("HF_CLASS_ORDER", "").strip().lower().split(",")
-        if len(source_order) == 2 and set(source_order) == {"real", "synthetic"}:
-            real_index = source_order.index("real")
-            synthetic_index = source_order.index("synthetic")
+        if (
+            len(source_order) == 2
+            and is_real(source_order[0])
+            and is_synthetic(source_order[1])
+        ):
+            real_index, synthetic_index = 0, 1
+        elif (
+            len(source_order) == 2
+            and is_synthetic(source_order[0])
+            and is_real(source_order[1])
+        ):
+            real_index, synthetic_index = 1, 0
         else:
             raise ValueError(
                 "Could not identify the Hugging Face class order from config.json. "
@@ -151,6 +177,8 @@ def _convert_hf_vit_state_dict(
 
 
 def _download_hf_checkpoint(repo_id: str, destination: Path) -> dict[str, Any]:
+    import torch
+
     from huggingface_hub import hf_hub_download
     from huggingface_hub.utils import EntryNotFoundError
 
@@ -158,6 +186,20 @@ def _download_hf_checkpoint(repo_id: str, destination: Path) -> dict[str, Any]:
         config_path = hf_hub_download(repo_id=repo_id, filename="config.json")
         with open(config_path, encoding="utf-8") as config_file:
             config = json.load(config_file)
+        try:
+            processor_path = hf_hub_download(
+                repo_id=repo_id, filename="preprocessor_config.json"
+            )
+        except EntryNotFoundError:
+            preprocessing = IMAGENET_PREPROCESSING
+        else:
+            with open(processor_path, encoding="utf-8") as processor_file:
+                processor = json.load(processor_file)
+            preprocessing = {
+                "mean": processor.get("image_mean", IMAGENET_PREPROCESSING["mean"]),
+                "std": processor.get("image_std", IMAGENET_PREPROCESSING["std"]),
+            }
+        preprocessing["layer_norm_eps"] = config.get("layer_norm_eps", 1e-6)
         if config.get("model_type") != "vit":
             raise ValueError(f"{repo_id} is not a Hugging Face ViT model.")
         if (
@@ -166,9 +208,7 @@ def _download_hf_checkpoint(repo_id: str, destination: Path) -> dict[str, Any]:
             or config.get("patch_size") != 16
             or config.get("image_size") != 224
         ):
-            raise ValueError(
-                f"{repo_id} is not a ViT-Base patch16 224 checkpoint."
-            )
+            raise ValueError(f"{repo_id} is not a ViT-Base patch16 224 checkpoint.")
         try:
             weights_path = hf_hub_download(
                 repo_id=repo_id, filename="model.safetensors"
@@ -194,9 +234,10 @@ def _download_hf_checkpoint(repo_id: str, destination: Path) -> dict[str, Any]:
         )
         model.load_state_dict(converted, strict=True)
         torch_state = model.state_dict()
-        import torch
-
-        torch.save(torch_state, destination)
+        torch.save(
+            {"state_dict": torch_state, "preprocessing": preprocessing},
+            destination,
+        )
         logger.info(
             "Downloaded and converted Hugging Face checkpoint %s to %s",
             repo_id,
@@ -212,7 +253,11 @@ def _download_url(url: str, destination: Path) -> None:
     import torch
     import timm
 
-    suffix = ".safetensors" if url.lower().split("?", 1)[0].endswith(".safetensors") else ".pth"
+    suffix = (
+        ".safetensors"
+        if url.lower().split("?", 1)[0].endswith(".safetensors")
+        else ".pth"
+    )
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
@@ -229,7 +274,16 @@ def _download_url(url: str, destination: Path) -> None:
         model = timm.create_model(MODEL_NAME, pretrained=False, num_classes=2)
         state = _clean_keys(_state_dict(checkpoint))
         model.load_state_dict(state, strict=True)
-        torch.save(model.state_dict(), destination)
+        torch.save(
+            {
+                "state_dict": model.state_dict(),
+                "preprocessing": {
+                    **IMAGENET_PREPROCESSING,
+                    "layer_norm_eps": 1e-6,
+                },
+            },
+            destination,
+        )
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -279,7 +333,16 @@ def initialize_checkpoint() -> Path | None:
         import timm
 
         model = timm.create_model(MODEL_NAME, pretrained=True, num_classes=2)
-        torch.save(model.state_dict(), checkpoint)
+        torch.save(
+            {
+                "state_dict": model.state_dict(),
+                "preprocessing": {
+                    **IMAGENET_PREPROCESSING,
+                    "layer_norm_eps": 1e-6,
+                },
+            },
+            checkpoint,
+        )
         logger.warning(
             "Created an ImageNet-initialized binary ViT checkpoint. It is suitable "
             "for inference smoke tests, not deepfake detection; use fine-tuned weights."

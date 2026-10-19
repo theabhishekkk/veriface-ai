@@ -53,21 +53,37 @@ def load_vit_model():
     if _vit_model is not None:
         return _vit_model
 
-    import torch
+    from functools import partial
+
     import timm
+    import torch
+    from torch import nn
     from torchvision import transforms
 
     if not os.path.isfile(MODEL_CHECKPOINT):
         raise FileNotFoundError(f"ViT checkpoint does not exist: {MODEL_CHECKPOINT}")
 
     _device = _get_device()
+    checkpoint = torch.load(MODEL_CHECKPOINT, map_location="cpu", weights_only=True)
+    preprocessing = (
+        checkpoint.get("preprocessing", {})
+        if isinstance(checkpoint, dict)
+        else {}
+    )
     model = timm.create_model(
         "vit_base_patch16_224",
         pretrained=False,
         num_classes=2,
+        norm_layer=partial(
+            nn.LayerNorm,
+            eps=preprocessing.get("layer_norm_eps", 1e-6),
+        ),
     )
-    checkpoint = torch.load(MODEL_CHECKPOINT, map_location="cpu", weights_only=True)
-    state_dict = checkpoint.get("state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    state_dict = (
+        checkpoint.get("state_dict", checkpoint)
+        if isinstance(checkpoint, dict)
+        else checkpoint
+    )
     if not isinstance(state_dict, dict):
         raise ValueError("The ViT checkpoint must contain a model state dictionary.")
     state_dict = {
@@ -76,8 +92,10 @@ def load_vit_model():
     }
     model.load_state_dict(state_dict, strict=True)
     model.eval().to(_device)
+    image_mean = preprocessing.get("mean", (0.485, 0.456, 0.406))
+    image_std = preprocessing.get("std", (0.229, 0.224, 0.225))
 
-    # Disable fused attention in the final block so timm exposes attention weights.
+    # Disable fused attention so each block exposes its attention matrix to hooks.
     if hasattr(model.blocks[-1].attn, "fused_attn"):
         for block in model.blocks:
             block.attn.fused_attn = False
@@ -86,10 +104,7 @@ def load_vit_model():
         [
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
-            transforms.Normalize(
-                mean=(0.485, 0.456, 0.406),
-                std=(0.229, 0.224, 0.225),
-            ),
+            transforms.Normalize(mean=tuple(image_mean), std=tuple(image_std)),
         ]
     )
     _vit_model = model
@@ -215,17 +230,13 @@ def _run_vit(image: Image.Image) -> dict[str, Any]:
         raise RuntimeError(
             "The ViT model did not expose attention weights from every transformer block."
         )
-    joint_attention = None
-    identity = torch.eye(attention_weights[0].shape[-1], device=_device)
+    joint_attention = torch.eye(attention_weights[0].shape[-1], device=_device)
+    identity = joint_attention
     for weights in attention_weights:
         mean_attention = weights[0].mean(dim=0).float()
         residual_attention = mean_attention + identity
         residual_attention /= residual_attention.sum(dim=-1, keepdim=True)
-        joint_attention = (
-            residual_attention
-            if joint_attention is None
-            else residual_attention @ joint_attention
-        )
+        joint_attention = residual_attention @ joint_attention
     cls_attention = joint_attention[0, 1:].cpu().numpy()
     attention_map = _normalize_attention(cls_attention.reshape(14, 14))
     return _make_result(

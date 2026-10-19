@@ -4,9 +4,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000 \
     USE_MOCK_MODEL=False \
-    INSTALL_VIT_MODEL=true \
     HF_MODEL_REPO=prithivMLmods/Deep-Fake-Detector-v2-Model \
     MODEL_CHECKPOINT=/models/vit_deepfake.pth
+
+ARG INSTALL_VIT_MODEL=true
+ENV INSTALL_VIT_MODEL=${INSTALL_VIT_MODEL}
 
 WORKDIR /app
 
@@ -21,7 +23,6 @@ COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r /app/requirements.txt
 
-ARG INSTALL_VIT_MODEL=true
 COPY backend/requirements-model.txt /app/requirements-model.txt
 RUN if [ "$INSTALL_VIT_MODEL" = "true" ]; then \
       pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
@@ -32,12 +33,13 @@ RUN if [ "$INSTALL_VIT_MODEL" = "true" ]; then \
 COPY backend/main.py backend/model.py /app/
 COPY backend/scripts /app/scripts
 
-RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+RUN mkdir -p /models && useradd --create-home --uid 10001 appuser && \
+    chown -R appuser:appuser /app /models
 USER appuser
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
     CMD curl -f "http://localhost:${PORT}/health" || exit 1
 
 CMD ["sh", "-c", "python /app/scripts/init_model.py && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

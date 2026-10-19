@@ -160,7 +160,7 @@ export default function Home() {
                 {backendHealth.online
                   ? backendHealth.mode === 'mock'
                     ? 'Backend: Mock Engine'
-                    : 'Backend: PyTorch ViT-Base'
+                    : 'Backend: ViT Real Engine'
                   : 'Backend: Connecting...'}
               </span>
             </div>

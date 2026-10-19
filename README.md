@@ -1,43 +1,63 @@
 # VeriFace AI
 
 VeriFace AI is a Next.js interface and FastAPI service for image analysis with a
-ViT attention visualization. By default, the API runs in mock mode so the full
-upload-to-history flow can be exercised without downloading model weights.
+ViT attention visualization. Real ViT inference is enabled by default. The
+backend downloads and converts the configured Hugging Face deepfake classifier
+once, then stores the compatible checkpoint under `backend/models`.
 
-> **Model limitation:** mock results are simulated and must not be used for
-> forensic, safety, or production decisions. The repository does not include a
-> deepfake-trained model. Real mode requires a fine-tuned two-class
-> `vit_base_patch16_224` state dictionary with class index `0 = Real` and
-> `1 = Synthetic`. ImageNet-pretrained weights alone do not detect deepfakes.
+> **Model limitation:** predictions are probabilistic and should not be used as
+> the sole basis for forensic, safety, or production decisions. If
+> `HF_MODEL_REPO` and `MODEL_URL` are both unset, bootstrap creates an
+> ImageNet-initialized model for inference smoke tests only; it is not trained
+> to detect deepfakes.
 
 ## Run locally
 
-1. Start the API from the project root:
+1. Start the API and frontend together from the project root:
 
    ```powershell
    docker compose up --build
    ```
 
-   API health and interactive documentation are available at
-   `http://localhost:8000/health` and `http://localhost:8000/docs`.
+   The first backend start downloads roughly 350 MB of Hugging Face weights.
+   The app is available at `http://localhost:3000`; health and interactive API
+   documentation are at `http://localhost:8000/health` and
+   `http://localhost:8000/docs`.
 
-2. Install and start the frontend:
+2. To run directly with a local Python environment, from the repository root:
 
    ```powershell
-   cd frontend
-   Copy-Item .env.local.example .env.local
-   npm install
+   py -3.14 -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install --upgrade pip
+   .\.venv\Scripts\python.exe -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+   .\.venv\Scripts\python.exe -m pip install -r backend\requirements-model.txt
+   Set-Location backend
+   ..\.venv\Scripts\python.exe scripts\init_model.py
+   ..\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
+   ```
+
+   In a second terminal:
+
+   ```powershell
+   Set-Location frontend
+   npm ci
    npm run dev
    ```
 
-   Visit `http://localhost:3000`. The default API URL is
-   `http://localhost:8000`.
+   The frontend uses `http://localhost:8000` as its default API URL.
 
 ## Configuration
 
 The backend reads `backend/.env` when run directly, or the project-root `.env`
-when run with Docker Compose. Start from `backend/.env.example` for direct
-execution, or copy `.env.example` to `.env` for Compose. For persistent
+when run with Docker Compose. Both local env files set
+`USE_MOCK_MODEL=False`, `INSTALL_VIT_MODEL=true`, and a default Hugging Face
+ViT-Base deepfake detector. `MODEL_URL` may point to a compatible PyTorch
+state-dictionary file instead; set `HF_MODEL_REPO` to a different public
+Hugging Face ViT-Base image classifier. Its `id2label` must identify real and
+synthetic/fake classes, or set `HF_CLASS_ORDER` to the source row order (for
+example, `fake,real`). The bootstrap remaps the classifier to VeriFace class
+index `0 = Real`, `1 = Synthetic`. Existing checkpoints are strictly validated
+before use. For persistent
 history, set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the backend and
 run [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL editor.
 Keep the service-role key out of frontend environment variables and source
@@ -62,21 +82,24 @@ its `./Dockerfile`. Set `SUPABASE_URL` to the project URL shown above and add
 `SUPABASE_SERVICE_ROLE_KEY` using Render's secret environment-variable UI.
 Never put the service-role key in GitHub, Vercel, or a `NEXT_PUBLIC_` variable.
 
-To enable real ViT inference:
+`MODEL_CHECKPOINT` defaults to `backend/models/vit_deepfake.pth` for direct
+local runs and `/models/vit_deepfake.pth` in Docker. Compose mounts
+`backend/models` writable so the startup initializer can persist downloaded
+weights. Set `USE_MOCK_MODEL=True` only when deliberately exercising the
+simulated path. PyTorch, torchvision, and timm are installed as CPU packages
+when `INSTALL_VIT_MODEL=true`.
 
-1. Set `USE_MOCK_MODEL=False`.
-2. Provide a compatible, fine-tuned binary checkpoint at a path visible to the
-   API process.
-3. Set `MODEL_CHECKPOINT` to that path. With Compose, mount the checkpoint
-   under `backend/models` and use its container path under `/models`.
+## Verify inference
 
-The backend rejects real-mode startup if a checkpoint is missing or invalid;
-it does not silently report simulated predictions as model output.
-The default Docker image intentionally omits PyTorch to keep mock-mode builds
-small and quick. For real inference, build with
-`docker compose build --build-arg INSTALL_VIT_MODEL=true backend`, then start
-with `INSTALL_VIT_MODEL=true`, `USE_MOCK_MODEL=False`, and the checkpoint
-environment variable configured.
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+curl.exe -X POST -F "file=@C:\path\to\portrait.jpg" http://localhost:8000/predict
+```
+
+Health reports `mock_mode`, `model_name`, `device`, and `checkpoint_loaded`.
+The prediction response includes Base64 JPEG overlay and JET heatmap data
+URLs; real attention rollout averages all heads and propagates attention with
+residual connections through all 12 transformer blocks.
 
 ## API
 

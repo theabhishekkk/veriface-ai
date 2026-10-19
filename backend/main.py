@@ -16,7 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 load_dotenv()
 
-from model import get_model_status, load_vit_model, predict_image
+from model import USE_MOCK_MODEL, get_model_status, load_vit_model, predict_image
 
 logger = logging.getLogger("veriface.api")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
@@ -129,7 +129,9 @@ async def health() -> dict[str, Any]:
     model_status = get_model_status()
     return {
         "status": "healthy",
-        "model_mode": "mock" if model_status["mock_mode"] else model_status["model_name"],
+        "model_mode": (
+            "mock" if model_status["mock_mode"] else model_status["model_name"]
+        ),
         **model_status,
         "checkpoint_configured": bool(model_status["checkpoint"]),
         "supabase_configured": supabase_client is not None,
