@@ -1,13 +1,11 @@
 import io
 import base64
-import os
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
-os.environ["USE_MOCK_MODEL"] = "True"
-
 import main
+import model
 from scripts.init_model import _class_row_indices
 
 
@@ -18,7 +16,27 @@ def _png_bytes(size: tuple[int, int] = (96, 64)) -> bytes:
     return stream.getvalue()
 
 
-def test_predict_returns_result_and_logs_scan():
+def _prediction_result() -> dict:
+    return {
+        "label": "Real",
+        "is_deepfake": False,
+        "confidence": 0.91,
+        "confidence_percentage": 91.0,
+        "attention_heatmap": "",
+        "raw_heatmap": "",
+        "execution_time_ms": 12.5,
+        "model_name": "vit_base_patch16_224",
+        "mode": "production_vit",
+        "patch_analysis": {
+            "patch_count": 196,
+            "grid_size": "14x14",
+            "highest_activation_zone": "Highest ViT attention patch",
+        },
+    }
+
+
+def test_predict_returns_result_and_logs_scan(monkeypatch):
+    monkeypatch.setattr(main, "predict_image", lambda _image_bytes: _prediction_result())
     main._recent_scans.clear()
     with TestClient(main.app) as client:
         response = client.post(
@@ -32,12 +50,6 @@ def test_predict_returns_result_and_logs_scan():
         assert result["is_deepfake"] is (result["label"] == "Synthetic")
         assert 0 <= result["confidence"] <= 1
         assert result["confidence_percentage"] == round(result["confidence"] * 100, 2)
-        assert result["attention_heatmap"].startswith("data:image/jpeg;base64,")
-        assert result["raw_heatmap"].startswith("data:image/jpeg;base64,")
-        heatmap = Image.open(
-            io.BytesIO(base64.b64decode(result["raw_heatmap"].split(",", 1)[1]))
-        )
-        assert heatmap.size == (96, 64)
         assert result["filename"] == "portrait.png"
         assert result["id"]
 
@@ -56,20 +68,16 @@ def test_predict_rejects_unsupported_file_type():
     assert response.status_code == 415
 
 
-def test_health_reports_model_mode_and_checkpoint_status():
+def test_health_reports_model_warming_up_until_first_prediction():
     with TestClient(main.app) as client:
         response = client.get("/health")
 
     assert response.status_code == 200
     health = response.json()
-    model_status = main.get_model_status()
-    assert health["mock_mode"] is model_status["mock_mode"]
-    assert health["model_mode"] == (
-        "mock" if model_status["mock_mode"] else "vit_base_patch16_224"
-    )
-    assert health["model_name"] == model_status["model_name"]
+    assert health["status"] == "warming_up"
+    assert health["model_name"] == "vit_base_patch16_224"
     assert isinstance(health["device"], str)
-    assert health["checkpoint_loaded"] is (not model_status["mock_mode"])
+    assert health["checkpoint_loaded"] is False
 
 
 def test_hugging_face_labels_are_mapped_to_real_then_synthetic():
@@ -111,17 +119,16 @@ def test_vercel_origin_is_allowed_without_allowing_arbitrary_sites():
     assert "access-control-allow-origin" not in other_response.headers
 
 
-def test_large_image_visualization_is_downscaled():
-    with TestClient(main.app) as client:
-        response = client.post(
-            "/predict",
-            files={"file": ("large.png", _png_bytes((1920, 1080)), "image/png")},
-        )
-
-    assert response.status_code == 200
-    heatmap = Image.open(
-        io.BytesIO(
-            base64.b64decode(response.json()["raw_heatmap"].split(",", 1)[1])
-        )
+def test_attention_heatmap_is_encoded_at_source_image_size():
+    image = Image.new("RGB", (1920, 1080), (80, 140, 210))
+    image_bgr = model.cv2.cvtColor(model.np.asarray(image), model.cv2.COLOR_RGB2BGR)
+    overlay, raw_heatmap = model._encode_heatmaps(
+        image_bgr, model.np.zeros((14, 14), dtype=model.np.float32)
     )
-    assert heatmap.size == (1600, 900)
+
+    for data_url in (overlay, raw_heatmap):
+        assert data_url.startswith("data:image/jpeg;base64,")
+        heatmap = Image.open(
+            io.BytesIO(base64.b64decode(data_url.split(",", 1)[1]))
+        )
+        assert heatmap.size == (1920, 1080)

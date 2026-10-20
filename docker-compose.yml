@@ -2,14 +2,10 @@ services:
   backend:
     build:
       context: ./backend
-      args:
-        INSTALL_VIT_MODEL: "${INSTALL_VIT_MODEL:-true}"
     ports:
       - "8000:8000"
     environment:
       PORT: "8000"
-      INSTALL_VIT_MODEL: "${INSTALL_VIT_MODEL:-true}"
-      USE_MOCK_MODEL: "${USE_MOCK_MODEL:-False}"
       MODEL_CHECKPOINT: "${MODEL_CHECKPOINT:-/models/vit_deepfake.pth}"
       HF_MODEL_REPO: "${HF_MODEL_REPO:-prithivMLmods/Deep-Fake-Detector-v2-Model}"
       MODEL_URL: "${MODEL_URL:-}"

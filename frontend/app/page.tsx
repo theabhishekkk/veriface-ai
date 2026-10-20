@@ -31,9 +31,8 @@ export default function Home() {
   // Backend status
   const [backendHealth, setBackendHealth] = useState<{
     online: boolean;
-    mode: string;
     supabase: boolean;
-  }>({ online: false, mode: 'unknown', supabase: false });
+  }>({ online: false, supabase: false });
 
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -51,7 +50,6 @@ export default function Home() {
         const data = await res.json();
         setBackendHealth({
           online: true,
-          mode: data.model_mode || 'vit_base_patch16_224',
           supabase: Boolean(data.supabase_configured),
         });
         return;
@@ -59,7 +57,7 @@ export default function Home() {
     } catch {
       // Backend not yet reachable
     }
-    setBackendHealth({ online: false, mode: 'offline', supabase: false });
+    setBackendHealth({ online: false, supabase: false });
   }, [backendUrl]);
 
   // Load scan history
@@ -150,17 +148,13 @@ export default function Home() {
               <span
                 className={`w-2 h-2 rounded-full ${
                   backendHealth.online
-                    ? backendHealth.mode === 'mock'
-                      ? 'bg-amber-400 animate-pulse'
-                      : 'bg-emerald-400 animate-pulse'
+                    ? 'bg-emerald-400 animate-pulse'
                     : 'bg-rose-500'
                 }`}
               />
               <span className="text-slate-400">
                 {backendHealth.online
-                  ? backendHealth.mode === 'mock'
-                    ? 'Backend: Mock Engine'
-                    : 'Backend: ViT Real Engine'
+                  ? 'Backend: ViT Real Engine Active'
                   : 'Backend: Connecting...'}
               </span>
             </div>
@@ -191,12 +185,6 @@ export default function Home() {
             vectors, detect generative artifacts, and inspect visual attention explainability heatmaps.
           </p>
         </div>
-
-        {backendHealth.mode === 'mock' && (
-          <div className="max-w-4xl mx-auto rounded-xl border border-amber-500/30 bg-amber-950/30 px-4 py-3 text-center text-sm text-amber-200">
-            Mock mode is enabled: results are simulated and are not suitable for forensic or production decisions.
-          </div>
-        )}
 
         {/* Global Error Banner */}
         {error && (

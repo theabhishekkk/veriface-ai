@@ -5,11 +5,11 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
-ENV USE_MOCK_MODEL=False
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV TORCH_NUM_THREADS=1
 ENV HF_MODEL_REPO=prithivMLmods/Deep-Fake-Detector-v2-Model
 ENV MODEL_CHECKPOINT=/models/vit_deepfake.pth
-ARG INSTALL_VIT_MODEL=true
-ENV INSTALL_VIT_MODEL=${INSTALL_VIT_MODEL}
 
 WORKDIR /app
 
@@ -27,11 +27,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY requirements-model.txt /app/
-RUN if [ "$INSTALL_VIT_MODEL" = "true" ]; then \
-      pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
-        "torch>=2.2.0,<3.0" "torchvision>=0.17.0,<1.0" && \
-      pip install --no-cache-dir -r /app/requirements-model.txt; \
-    fi
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+      "torch>=2.2.0,<3.0" "torchvision>=0.17.0,<1.0" && \
+    pip install --no-cache-dir -r /app/requirements-model.txt
 
 # Copy application source code
 COPY main.py model.py /app/
@@ -47,7 +45,7 @@ EXPOSE 8000
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f "http://localhost:${PORT}/health" || exit 1
 
 # Start FastAPI server via uvicorn
-CMD ["sh", "-c", "python /app/scripts/init_model.py && exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

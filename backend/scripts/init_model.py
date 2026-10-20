@@ -289,24 +289,7 @@ def _download_url(url: str, destination: Path) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-def _validate_checkpoint(path: Path) -> None:
-    import torch
-    import timm
-
-    model = timm.create_model(MODEL_NAME, pretrained=False, num_classes=2)
-    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-    model.load_state_dict(_clean_keys(_state_dict(checkpoint)), strict=True)
-
-
-def initialize_checkpoint() -> Path | None:
-    if os.getenv("INSTALL_VIT_MODEL", "true").strip().lower() not in {
-        "true",
-        "1",
-        "yes",
-    }:
-        logger.info("INSTALL_VIT_MODEL is disabled; skipping model initialization.")
-        return None
-
+def initialize_checkpoint() -> Path:
     checkpoint = Path(
         os.getenv(
             "MODEL_CHECKPOINT",
@@ -318,8 +301,6 @@ def initialize_checkpoint() -> Path | None:
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
 
     if checkpoint.is_file():
-        _validate_checkpoint(checkpoint)
-        logger.info("Validated existing ViT checkpoint at %s", checkpoint)
         return checkpoint
 
     model_url = os.getenv("MODEL_URL", "").strip()
@@ -329,26 +310,10 @@ def initialize_checkpoint() -> Path | None:
     elif hf_model_repo:
         _download_hf_checkpoint(hf_model_repo, checkpoint)
     else:
-        import torch
-        import timm
-
-        model = timm.create_model(MODEL_NAME, pretrained=True, num_classes=2)
-        torch.save(
-            {
-                "state_dict": model.state_dict(),
-                "preprocessing": {
-                    **IMAGENET_PREPROCESSING,
-                    "layer_norm_eps": 1e-6,
-                },
-            },
-            checkpoint,
-        )
-        logger.warning(
-            "Created an ImageNet-initialized binary ViT checkpoint. It is suitable "
-            "for inference smoke tests, not deepfake detection; use fine-tuned weights."
+        raise RuntimeError(
+            "No trained ViT weights are configured. Set HF_MODEL_REPO or MODEL_URL."
         )
 
-    _validate_checkpoint(checkpoint)
     return checkpoint
 
 

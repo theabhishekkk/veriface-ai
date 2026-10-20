@@ -4,6 +4,7 @@ import base64
 import io
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -14,19 +15,20 @@ from PIL import Image, UnidentifiedImageError
 
 logger = logging.getLogger("veriface.model")
 
-USE_MOCK_MODEL = os.getenv("USE_MOCK_MODEL", "True").strip().lower() in {
-    "true",
-    "1",
-    "yes",
-}
-MODEL_CHECKPOINT = os.getenv(
-    "MODEL_CHECKPOINT",
-    str(Path(__file__).resolve().parent / "models" / "vit_deepfake.pth"),
-).strip()
+MODEL_CHECKPOINT = Path(
+    os.getenv(
+        "MODEL_CHECKPOINT",
+        str(Path(__file__).resolve().parent / "models" / "vit_deepfake.pth"),
+    )
+).expanduser()
+if not MODEL_CHECKPOINT.is_absolute():
+    MODEL_CHECKPOINT = (Path(__file__).resolve().parent / MODEL_CHECKPOINT).resolve()
 
 _vit_model = None
 _vit_transform = None
 _device = "cpu"
+_model_load_error = None
+_model_load_lock = threading.Lock()
 
 
 def _get_device() -> str:
@@ -41,75 +43,97 @@ def _get_device() -> str:
 
 def load_vit_model():
     """Load a binary fine-tuned ViT checkpoint and its image transform."""
-    global _vit_model, _vit_transform, _device
+    global _vit_model, _vit_transform, _device, _model_load_error
 
-    if USE_MOCK_MODEL:
-        return None
-    if not MODEL_CHECKPOINT:
-        raise RuntimeError(
-            "USE_MOCK_MODEL is disabled, but MODEL_CHECKPOINT is not configured. "
-            "Provide a fine-tuned two-class ViT checkpoint."
-        )
     if _vit_model is not None:
         return _vit_model
 
-    from functools import partial
+    with _model_load_lock:
+        if _vit_model is not None:
+            return _vit_model
 
-    import timm
-    import torch
-    from torch import nn
-    from torchvision import transforms
+        try:
+            if not MODEL_CHECKPOINT.is_file():
+                from scripts.init_model import initialize_checkpoint
 
-    if not os.path.isfile(MODEL_CHECKPOINT):
-        raise FileNotFoundError(f"ViT checkpoint does not exist: {MODEL_CHECKPOINT}")
+                initialize_checkpoint()
+            if not MODEL_CHECKPOINT.is_file():
+                raise FileNotFoundError(
+                    f"ViT checkpoint does not exist: {MODEL_CHECKPOINT}"
+                )
 
-    _device = _get_device()
-    checkpoint = torch.load(MODEL_CHECKPOINT, map_location="cpu", weights_only=True)
-    preprocessing = (
-        checkpoint.get("preprocessing", {})
-        if isinstance(checkpoint, dict)
-        else {}
-    )
-    model = timm.create_model(
-        "vit_base_patch16_224",
-        pretrained=False,
-        num_classes=2,
-        norm_layer=partial(
-            nn.LayerNorm,
-            eps=preprocessing.get("layer_norm_eps", 1e-6),
-        ),
-    )
-    state_dict = (
-        checkpoint.get("state_dict", checkpoint)
-        if isinstance(checkpoint, dict)
-        else checkpoint
-    )
-    if not isinstance(state_dict, dict):
-        raise ValueError("The ViT checkpoint must contain a model state dictionary.")
-    state_dict = {
-        key.removeprefix("module."): value
-        for key, value in state_dict.items()
-    }
-    model.load_state_dict(state_dict, strict=True)
-    model.eval().to(_device)
-    image_mean = preprocessing.get("mean", (0.485, 0.456, 0.406))
-    image_std = preprocessing.get("std", (0.229, 0.224, 0.225))
+            from functools import partial
 
-    # Disable fused attention so each block exposes its attention matrix to hooks.
-    if hasattr(model.blocks[-1].attn, "fused_attn"):
-        for block in model.blocks:
-            block.attn.fused_attn = False
+            import timm
+            import torch
+            from torch import nn
+            from torchvision import transforms
 
-    _vit_transform = transforms.Compose(
-        [
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=tuple(image_mean), std=tuple(image_std)),
-        ]
-    )
-    _vit_model = model
-    logger.info("Loaded ViT checkpoint %s on %s", MODEL_CHECKPOINT, _device)
-    return _vit_model
+            num_threads = int(os.getenv("TORCH_NUM_THREADS", "1"))
+            if num_threads < 1:
+                raise ValueError("TORCH_NUM_THREADS must be a positive integer.")
+            torch.set_num_threads(num_threads)
+
+            checkpoint = torch.load(
+                MODEL_CHECKPOINT,
+                map_location="cpu",
+                weights_only=True,
+                mmap=True,
+            )
+            preprocessing = (
+                checkpoint.get("preprocessing", {})
+                if isinstance(checkpoint, dict)
+                else {}
+            )
+            model = timm.create_model(
+                "vit_base_patch16_224",
+                pretrained=False,
+                num_classes=2,
+                norm_layer=partial(
+                    nn.LayerNorm,
+                    eps=preprocessing.get("layer_norm_eps", 1e-6),
+                ),
+            )
+            state_dict = (
+                checkpoint.get("state_dict", checkpoint)
+                if isinstance(checkpoint, dict)
+                else checkpoint
+            )
+            if not isinstance(state_dict, dict):
+                raise ValueError(
+                    "The ViT checkpoint must contain a model state dictionary."
+                )
+            state_dict = {
+                key.removeprefix("module."): value
+                for key, value in state_dict.items()
+            }
+            model.load_state_dict(state_dict, strict=True, assign=True)
+            _device = _get_device()
+            model.to(_device).eval()
+            image_mean = preprocessing.get("mean", (0.485, 0.456, 0.406))
+            image_std = preprocessing.get("std", (0.229, 0.224, 0.225))
+
+            # Disable fused attention so each block exposes its attention matrix to hooks.
+            if hasattr(model.blocks[-1].attn, "fused_attn"):
+                for block in model.blocks:
+                    block.attn.fused_attn = False
+
+            _vit_transform = transforms.Compose(
+                [
+                    transforms.Resize((224, 224)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=tuple(image_mean), std=tuple(image_std)),
+                ]
+            )
+            _vit_model = model
+            _model_load_error = None
+            logger.info("Loaded ViT checkpoint %s on %s", MODEL_CHECKPOINT, _device)
+            return _vit_model
+        except Exception as exc:
+            _model_load_error = str(exc)
+            raise RuntimeError(
+                f"Failed to load the ViT deepfake model from {MODEL_CHECKPOINT}: {exc}"
+            ) from exc
 
 
 def _normalize_attention(attention: np.ndarray) -> np.ndarray:
@@ -118,17 +142,6 @@ def _normalize_attention(attention: np.ndarray) -> np.ndarray:
     if high - low < 1e-8:
         return np.zeros_like(attention, dtype=np.float32)
     return ((attention - low) / (high - low)).astype(np.float32)
-
-
-def _mock_attention_map(image: np.ndarray) -> np.ndarray:
-    """Create a deterministic, visibly non-uniform simulated 14x14 map."""
-    seed = int(np.sum(image[:: max(1, image.shape[0] // 20), :: max(1, image.shape[1] // 20)])) % 2**32
-    rng = np.random.default_rng(seed)
-    y, x = np.mgrid[0:14, 0:14]
-    center = np.exp(-((x - 6.5) ** 2 + (y - 6.5) ** 2) / 25)
-    eyes = np.exp(-((x - 6.5) ** 2 + (y - 4.5) ** 2) / 8)
-    mouth = np.exp(-((x - 6.5) ** 2 + (y - 9.5) ** 2) / 10)
-    return _normalize_attention((0.45 * center + 0.35 * eyes + 0.2 * mouth) * rng.uniform(0.9, 1.1, (14, 14)))
 
 
 def _encode_heatmaps(image_bgr: np.ndarray, attention: np.ndarray) -> tuple[str, str]:
@@ -172,29 +185,9 @@ def _make_result(
         "patch_analysis": {
             "patch_count": 196,
             "grid_size": "14x14",
-            "highest_activation_zone": (
-                "Highest ViT attention patch" if mode == "production_vit" else "Simulated facial-feature focus"
-            ),
+            "highest_activation_zone": "Highest ViT attention patch",
         },
     }
-
-
-def _run_mock(image: Image.Image) -> dict[str, Any]:
-    started = time.perf_counter()
-    image_bgr = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
-    sample = image_bgr[:: max(1, image_bgr.shape[0] // 64), :: max(1, image_bgr.shape[1] // 64), 0]
-    image_score = int(np.sum(sample, dtype=np.uint64) % 100)
-    is_synthetic = image_score >= 50
-    confidence = 0.75 + (image_score / 100) * 0.2
-    return _make_result(
-        image,
-        _mock_attention_map(image_bgr),
-        is_synthetic,
-        confidence,
-        (time.perf_counter() - started) * 1000,
-        "mock",
-        "vit_base_patch16_224 (simulated)",
-    )
 
 
 def _run_vit(image: Image.Image) -> dict[str, Any]:
@@ -253,11 +246,17 @@ def _run_vit(image: Image.Image) -> dict[str, Any]:
 def get_model_status() -> dict[str, Any]:
     """Return the configured and currently loaded inference model state."""
     return {
-        "mock_mode": USE_MOCK_MODEL,
-        "model_name": "mock" if USE_MOCK_MODEL else "vit_base_patch16_224",
-        "device": "cpu" if USE_MOCK_MODEL else _device,
-        "checkpoint": MODEL_CHECKPOINT,
-        "checkpoint_loaded": not USE_MOCK_MODEL and _vit_model is not None,
+        "status": (
+            "ready"
+            if _vit_model is not None
+            else "error"
+            if _model_load_error is not None
+            else "warming_up"
+        ),
+        "model_name": "vit_base_patch16_224",
+        "device": _device,
+        "checkpoint": str(MODEL_CHECKPOINT),
+        "checkpoint_loaded": _vit_model is not None,
     }
 
 
@@ -278,4 +277,4 @@ def predict_image(image_bytes: bytes) -> dict[str, Any]:
     ) as exc:
         raise ValueError("The uploaded file is not a valid JPEG or PNG image.") from exc
 
-    return _run_mock(image) if USE_MOCK_MODEL else _run_vit(image)
+    return _run_vit(image)

@@ -3,9 +3,8 @@
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -16,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 load_dotenv()
 
-from model import USE_MOCK_MODEL, get_model_status, load_vit_model, predict_image
+from model import get_model_status, predict_image
 
 logger = logging.getLogger("veriface.api")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
@@ -90,18 +89,6 @@ class ScanItem(BaseModel):
     created_at: str
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    if not USE_MOCK_MODEL:
-        await run_in_threadpool(load_vit_model)
-    logger.info(
-        "VeriFace API started (mode=%s, supabase=%s)",
-        "mock" if USE_MOCK_MODEL else "vit_base_patch16_224",
-        bool(supabase_client),
-    )
-    yield
-
-
 app = FastAPI(
     title="VeriFace AI API",
     description="Vision Transformer deepfake analysis with attention-map explainability.",
@@ -128,12 +115,7 @@ async def root() -> dict[str, str]:
 async def health() -> dict[str, Any]:
     model_status = get_model_status()
     return {
-        "status": "healthy",
-        "model_mode": (
-            "mock" if model_status["mock_mode"] else model_status["model_name"]
-        ),
         **model_status,
-        "checkpoint_configured": bool(model_status["checkpoint"]),
         "supabase_configured": supabase_client is not None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -165,7 +147,10 @@ async def predict(file: UploadFile = File(...)) -> PredictResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Image inference failed")
-        raise HTTPException(status_code=503, detail="Inference is unavailable.") from exc
+        raise HTTPException(
+            status_code=503,
+            detail=f"ViT inference is unavailable: {exc}",
+        ) from exc
 
     created_at = datetime.now(timezone.utc).isoformat()
     scan = {
