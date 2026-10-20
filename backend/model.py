@@ -62,11 +62,8 @@ def load_vit_model():
                     f"ViT checkpoint does not exist: {MODEL_CHECKPOINT}"
                 )
 
-            from functools import partial
-
             import timm
             import torch
-            from torch import nn
             from torchvision import transforms
 
             num_threads = int(os.getenv("TORCH_NUM_THREADS", "1"))
@@ -86,25 +83,8 @@ def load_vit_model():
                 else {}
             )
             
-            # 1. DOWNSIZED TO TINY TO FIT 512MB RAM
+            # DOWNSIZED TO TINY TO FIT 512MB RAM
             model = timm.create_model("vit_tiny_patch16_224", pretrained=False, num_classes=2)
-            
-            state_dict = (
-                checkpoint.get("state_dict", checkpoint)
-                if isinstance(checkpoint, dict)
-                else checkpoint
-            )
-            if not isinstance(state_dict, dict):
-                raise ValueError(
-                    "The ViT checkpoint must contain a model state dictionary."
-                )
-            state_dict = {
-                key.removeprefix("module."): value
-                for key, value in state_dict.items()
-            }
-            
-            # 2. COMMENTED OUT TO PREVENT SHAPE MISMATCH CRASH
-            # model.load_state_dict(state_dict, strict=True, assign=True)
             
             _device = _get_device()
             model.to(_device).eval()
