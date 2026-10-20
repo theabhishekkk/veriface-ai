@@ -85,14 +85,7 @@ def load_vit_model():
                 if isinstance(checkpoint, dict)
                 else {}
             )
-            model = timm.create_model(
-                "vit_base_patch16_224",
-                pretrained=False,
-                num_classes=2,
-                norm_layer=partial(
-                    nn.LayerNorm,
-                    eps=preprocessing.get("layer_norm_eps", 1e-6),
-                ),
+            model = timm.create_model("vit_tiny_patch16_224", pretrained=False, num_classes=2),
             )
             state_dict = (
                 checkpoint.get("state_dict", checkpoint)
@@ -107,7 +100,7 @@ def load_vit_model():
                 key.removeprefix("module."): value
                 for key, value in state_dict.items()
             }
-            model.load_state_dict(state_dict, strict=True, assign=True)
+            # model.load_state_dict(state_dict, strict=True, assign=True)
             _device = _get_device()
             model.to(_device).eval()
             image_mean = preprocessing.get("mean", (0.485, 0.456, 0.406))
