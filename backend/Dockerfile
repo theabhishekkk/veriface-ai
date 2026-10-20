@@ -35,17 +35,28 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 COPY main.py model.py /app/
 COPY scripts /app/scripts
 
-# Run the API as an unprivileged user.
+# Create /models directory and set permissions
 RUN mkdir -p /models && useradd --create-home --uid 10001 appuser && \
     chown -R appuser:appuser /app /models
+
 USER appuser
 
-# Expose API port
+# Pre-download and convert the ViT checkpoint during Docker BUILD (high RAM limit)
+# instead of container startup (strict 512MB RAM limit)
+RUN if [ "$INSTALL_VIT_MODEL" = "true" ] && [ "$USE_MOCK_MODEL" = "False" ]; then \
+        python /app/scripts/init_model.py; \
+    fi
+
 EXPOSE 8000
 
+<<<<<<< HEAD
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
   CMD curl -f "http://localhost:${PORT}/health" || exit 1
 
 # Start FastAPI server via uvicorn
 CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+=======
+# Start FastAPI directly without re-running init_model.py in the same memory space
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+>>>>>>> f7a9cd8b1d72ab30e08fda998ca16c03506fbcdb

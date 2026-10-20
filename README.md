@@ -1,15 +1,13 @@
 # VeriFace AI
 
 VeriFace AI is a Next.js interface and FastAPI service for image analysis with a
-ViT attention visualization. Real ViT inference is enabled by default. The
-backend downloads and converts the configured Hugging Face deepfake classifier
-once, then stores the compatible checkpoint under `backend/models`.
+ViT attention visualization. All predictions use a fine-tuned real/synthetic
+ViT-Base classifier. The backend loads the configured checkpoint lazily on the
+first prediction and downloads/converts the configured Hugging Face deepfake
+classifier if the local checkpoint is missing.
 
 > **Model limitation:** predictions are probabilistic and should not be used as
-> the sole basis for forensic, safety, or production decisions. If
-> `HF_MODEL_REPO` and `MODEL_URL` are both unset, bootstrap creates an
-> ImageNet-initialized model for inference smoke tests only; it is not trained
-> to detect deepfakes.
+> the sole basis for forensic, safety, or production decisions.
 
 ## Run locally
 
@@ -19,7 +17,9 @@ once, then stores the compatible checkpoint under `backend/models`.
    docker compose up --build
    ```
 
-   The first backend start downloads roughly 350 MB of Hugging Face weights.
+   The first `/predict` request downloads roughly 350 MB of Hugging Face
+   weights if no local checkpoint exists. `/health` returns immediately with
+   `status: "warming_up"` until the model is loaded.
    The app is available at `http://localhost:3000`; health and interactive API
    documentation are at `http://localhost:8000/health` and
    `http://localhost:8000/docs`.
@@ -49,9 +49,8 @@ once, then stores the compatible checkpoint under `backend/models`.
 ## Configuration
 
 The backend reads `backend/.env` when run directly, or the project-root `.env`
-when run with Docker Compose. Both local env files set
-`USE_MOCK_MODEL=False`, `INSTALL_VIT_MODEL=true`, and a default Hugging Face
-ViT-Base deepfake detector. `MODEL_URL` may point to a compatible PyTorch
+when run with Docker Compose. Both local env files configure a default Hugging Face ViT-Base deepfake
+detector. `MODEL_URL` may point to a compatible PyTorch
 state-dictionary file instead; set `HF_MODEL_REPO` to a different public
 Hugging Face ViT-Base image classifier. Its `id2label` must identify real and
 synthetic/fake classes, or set `HF_CLASS_ORDER` to the source row order (for
@@ -84,10 +83,8 @@ Never put the service-role key in GitHub, Vercel, or a `NEXT_PUBLIC_` variable.
 
 `MODEL_CHECKPOINT` defaults to `backend/models/vit_deepfake.pth` for direct
 local runs and `/models/vit_deepfake.pth` in Docker. Compose mounts
-`backend/models` writable so the startup initializer can persist downloaded
-weights. Set `USE_MOCK_MODEL=True` only when deliberately exercising the
-simulated path. PyTorch, torchvision, and timm are installed as CPU packages
-when `INSTALL_VIT_MODEL=true`.
+`backend/models` writable so the first prediction can persist downloaded
+weights. PyTorch, torchvision, and timm are installed as CPU packages.
 
 ## Verify inference
 
@@ -96,14 +93,15 @@ Invoke-RestMethod http://localhost:8000/health
 curl.exe -X POST -F "file=@C:\path\to\portrait.jpg" http://localhost:8000/predict
 ```
 
-Health reports `mock_mode`, `model_name`, `device`, and `checkpoint_loaded`.
-The prediction response includes Base64 JPEG overlay and JET heatmap data
-URLs; real attention rollout averages all heads and propagates attention with
-residual connections through all 12 transformer blocks.
+Health reports a `status` of `warming_up`, `ready`, or `error`, as well as
+`model_name`, `device`, and `checkpoint_loaded`. The prediction response
+includes Base64 JPEG overlay and JET heatmap data URLs; real attention rollout
+averages all heads and propagates attention with residual connections through
+all 12 transformer blocks.
 
 ## API
 
-- `GET /health` — service and model-mode status.
+- `GET /health` — immediate service and model-loading status.
 - `POST /predict` — JPEG/PNG multipart upload using form field `file`; returns
   the verdict, confidence, latency, and Base64 attention heatmaps.
 - `GET /scans?limit=5` — most recent scans from Supabase or the local fallback

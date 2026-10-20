@@ -290,14 +290,15 @@ def _download_url(url: str, destination: Path) -> None:
 
 
 def initialize_checkpoint() -> Path:
+    backend_dir = Path(__file__).resolve().parents[1]
     checkpoint = Path(
         os.getenv(
             "MODEL_CHECKPOINT",
-            str(Path(__file__).resolve().parents[1] / "models" / "vit_deepfake.pth"),
+            str(backend_dir / "models" / "vit_deepfake.pth"),
         )
     ).expanduser()
     if not checkpoint.is_absolute():
-        checkpoint = (Path.cwd() / checkpoint).resolve()
+        checkpoint = (backend_dir / checkpoint).resolve()
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
 
     if checkpoint.is_file():
