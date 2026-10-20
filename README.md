@@ -32,7 +32,6 @@ classifier if the local checkpoint is missing.
    .\.venv\Scripts\python.exe -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
    .\.venv\Scripts\python.exe -m pip install -r backend\requirements-model.txt
    Set-Location backend
-   ..\.venv\Scripts\python.exe scripts\init_model.py
    ..\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000
    ```
 
@@ -49,15 +48,15 @@ classifier if the local checkpoint is missing.
 ## Configuration
 
 The backend reads `backend/.env` when run directly, or the project-root `.env`
-when run with Docker Compose. Both local env files configure a default Hugging Face ViT-Base deepfake
-detector. `MODEL_URL` may point to a compatible PyTorch
-state-dictionary file instead; set `HF_MODEL_REPO` to a different public
+when run with Docker Compose. Both local env files configure a default
+Hugging Face ViT-Base deepfake detector. `MODEL_URL` may point to a compatible
+PyTorch state-dictionary file instead; set `HF_MODEL_REPO` to a different public
 Hugging Face ViT-Base image classifier. Its `id2label` must identify real and
 synthetic/fake classes, or set `HF_CLASS_ORDER` to the source row order (for
 example, `fake,real`). The bootstrap remaps the classifier to VeriFace class
-index `0 = Real`, `1 = Synthetic`. Existing checkpoints are strictly validated
-before use. For persistent
-history, set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the backend and
+index `0 = Real`, `1 = Synthetic`; local checkpoints are loaded strictly before
+inference. For persistent history, set `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` on the backend and
 run [`supabase/schema.sql`](./supabase/schema.sql) in the Supabase SQL editor.
 Keep the service-role key out of frontend environment variables and source
 control. The five most recent scan records are shared through the public
