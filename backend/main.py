@@ -93,7 +93,6 @@ app = FastAPI(
     title="VeriFace AI API",
     description="Vision Transformer deepfake analysis with attention-map explainability.",
     version="1.0.0",
-    lifespan=lifespan,
 )
 
 app.add_middleware(
